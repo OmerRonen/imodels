@@ -57,7 +57,7 @@ def _extract_arrays_from_figs_tree(figs_tree):
 
     return tree_data, np.array(value_sklearn_array)
 
-def extract_sklearn_tree_from_figs(figs, tree_num, n_classes, with_leaf_predictions=False):
+def extract_sklearn_tree_from_figs(figs, tree_num, n_classes, with_leaf_predictions=False, n_features_in=None):
     """Takes in a FIGS model and convert tree tree_num to a sklearn decision tree
     """
 
@@ -97,13 +97,14 @@ def extract_sklearn_tree_from_figs(figs, tree_num, n_classes, with_leaf_predicti
     n_features = np.unique(features[np.where( 0 <= features )]).size
     n_classes_array = np.array([n_classes], dtype=int)
     n_outputs = 1
+    n_features_in_ = getattr(figs, 'n_features_in_') if hasattr(figs, 'n_features_in_') else n_features_in
 
     # make dict to pass to __setstate__()
     _state = {'max_depth': max_depth,
         'node_count': node_count,
         'nodes': tree_data_array,
         'values': value_sklearns,
-        'n_features_in_': figs.n_features_in_,
+        'n_features_in_': n_features_in_,
         # WARNING this circumvents
         # UserWarning: Trying to unpickle estimator DecisionTreeClassifier from version pre-0.18 when using version
         # https://github.com/scikit-learn/scikit-learn/blob/53acd0fe52cb5d8c6f5a86a1fc1352809240b68d/sklearn/base.py#L279
