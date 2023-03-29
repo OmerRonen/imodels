@@ -1,7 +1,10 @@
-from copy import deepcopy
-from typing import List
+import copy
 
 import numpy as np
+import cvxpy as cp
+
+from copy import deepcopy
+from typing import List
 from sklearn import datasets
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.metrics import r2_score
@@ -16,11 +19,94 @@ from imodels.util.arguments import check_fit_arguments
 from imodels.util.tree import compute_tree_complexity
 
 
+def tree_to_graph(tree):
+    """
+    Converts a fitted decision tree into a graph where the vertices are the averages at each node
+    and the edges connect parent and child nodes.
+
+    Args:
+    tree: A fitted decision tree model.
+
+    Returns:
+    A tuple containing two sets: a set of edges and a set of vertices.
+    """
+
+    # Get the set of vertices (i.e. the averages at each node)
+    vertices = list()
+    for i in range(tree.node_count):
+        # if tree.children_left[i] == tree.children_right[i]:  # leaf node
+        value = tree.value[i][0][0]  # get the value at the leaf node
+        # if value is not a scalar, then we normalize it
+        if value.shape:
+            value = value / np.sum(value)
+
+        vertices.append(value)
+
+    # Get the set of edges (i.e. the connections between parent and child nodes)
+    edges = set()
+    for i in range(tree.node_count):
+        if tree.children_left[i] != -1:  # not a leaf node
+            edges.add((i, tree.children_left[i]))
+            edges.add((i, tree.children_right[i]))
+
+    # get weights for each vertex (i.e. the number of samples at each node)
+    weights = list()
+    for i in range(tree.node_count):
+        weights.append(tree.n_node_samples[i])
+
+    return edges, np.array(vertices), np.array(weights)
+
+
+def create_connectivity_matrix(edges, num_vertices):
+    """
+    Creates a connectivity matrix from a set of edges.
+
+    Args:
+    edges: A set of edges in the graph.
+    num_vertices: The number of vertices in the graph.
+
+    Returns:
+    A 2D numpy array representing the connectivity matrix.
+    """
+
+    # Initialize the connectivity matrix
+    conn_matrix = np.zeros((len(edges), num_vertices))
+
+    # Fill in the connectivity matrix based on the edges
+    for i, edge in enumerate(edges):
+        parent, child = edge
+        conn_matrix[i, parent] = 1
+        conn_matrix[i, child] = -1
+
+    return conn_matrix
+
+
+# Solver for signal approximator problem
+def get_shrunk_nodes(node_values, edge_matrix, reg_param, weights):
+    n = len(node_values)
+
+    theta = cp.Variable(n)
+    z = cp.Variable(edge_matrix.shape[0])
+
+    fit_term = cp.sum_squares(cp.multiply(weights,(node_values - theta)))
+    shrink_term = reg_param * cp.sum(z)
+    objective = cp.Minimize(fit_term + shrink_term)
+    constraints = [z >= 0, -z <= edge_matrix @ theta, edge_matrix @ theta <= z]
+    prob = cp.Problem(objective, constraints)
+    # Gurobi offers free academic licenses but you can change this to a
+    # free solver
+    # https://www.cvxpy.org/tutorial/advanced/index.html#choosing-a-solver
+    # prob.solve(solver=cp.GUROBI)
+    prob.solve(solver=cp.OSQP)
+    return theta.value
+
+
+
 class HSTree:
     def __init__(self, estimator_: BaseEstimator = DecisionTreeClassifier(max_leaf_nodes=20),
                  reg_param: float = 1, shrinkage_scheme_: str = 'node_based'):
         """HSTree (Tree with hierarchical shrinkage applied).
-        Hierarchical shinkage is an extremely fast post-hoc regularization method which works on any decision tree (or tree-based ensemble, such as Random Forest).
+        Hierarchical shrinkage is an extremely fast post-hoc regularization method which works on any decision tree (or tree-based ensemble, such as Random Forest).
         It does not modify the tree structure, and instead regularizes the tree by shrinking the prediction over each node towards the sample means of its ancestors (using a single regularization parameter).
         Experiments over a wide variety of datasets show that hierarchical shrinkage substantially increases the predictive performance of individual decision trees and decision-tree ensembles.
         https://arxiv.org/abs/2202.00858
@@ -75,6 +161,14 @@ class HSTree:
         return self
 
     def _shrink_tree(self, tree, reg_param, i=0, parent_val=None, parent_num=None, cum_sum=0):
+        if self.shrinkage_scheme_ == 'ridge':
+            return self._shrink_tree_ridge(tree, reg_param, i, parent_val, parent_num, cum_sum)
+        elif self.shrinkage_scheme_ == 'tv':
+            return self._shrink_tree_tv(tree, reg_param, i, parent_val, parent_num, cum_sum)
+        else:
+            raise ValueError('shrinkage_scheme_ must be one of: ridge, tv')
+
+    def _shrink_tree_ridge(self, tree, reg_param, i=0, parent_val=None, parent_num=None, cum_sum=0):
         """Shrink the tree
         """
         if reg_param is None:
@@ -85,7 +179,7 @@ class HSTree:
         n_samples = tree.weighted_n_node_samples[i]
         if isinstance(self, RegressorMixin) or isinstance(self.estimator_, GradientBoostingClassifier):
             val = deepcopy(tree.value[i, :, :])
-        else: # If classification, normalize to probability vector
+        else:  # If classification, normalize to probability vector
             val = tree.value[i, :, :] / n_samples
 
         # Step 1: Update cum_sum
@@ -99,15 +193,15 @@ class HSTree:
                 val_new = (val - parent_val) / (1 + reg_param / parent_num)
             elif self.shrinkage_scheme_ == 'constant':
                 val_new = (val - parent_val) / (1 + reg_param)
-            else: # leaf_based
+            else:  # leaf_based
                 val_new = 0
             cum_sum += val_new
 
         # Step 2: Update node values
         if self.shrinkage_scheme_ == 'node_based' or self.shrinkage_scheme_ == 'constant':
             tree.value[i, :, :] = cum_sum
-        else: # leaf_based
-            if is_leaf: # update node values if leaf_based
+        else:  # leaf_based
+            if is_leaf:  # update node values if leaf_based
                 root_val = tree.value[0, :, :]
                 tree.value[i, :, :] = root_val + (val - root_val) / (1 + reg_param / n_samples)
             else:
@@ -115,12 +209,27 @@ class HSTree:
 
                 # Step 3: Recurse if not leaf
         if not is_leaf:
-            self._shrink_tree(tree, reg_param, left,
-                              parent_val=val, parent_num=n_samples, cum_sum=deepcopy(cum_sum))
-            self._shrink_tree(tree, reg_param, right,
-                              parent_val=val, parent_num=n_samples, cum_sum=deepcopy(cum_sum))
+            self._shrink_tree_ridge(tree, reg_param, left,
+                                    parent_val=val, parent_num=n_samples, cum_sum=deepcopy(cum_sum))
+            self._shrink_tree_ridge(tree, reg_param, right,
+                                    parent_val=val, parent_num=n_samples, cum_sum=deepcopy(cum_sum))
 
-                # edit the non-leaf nodes for later visualization (doesn't effect predictions)
+            # edit the non-leaf nodes for later visualization (doesn't effect predictions)
+
+        return tree
+
+    def _shrink_tree_tv(self, tree, reg_param, i=0, parent_val=None, parent_num=None, cum_sum=0):
+        if reg_param is None:
+            reg_param = 1.0
+        # tree = copy.deepcopy(tree)
+        edges, vertices, weights = tree_to_graph(tree)
+
+        edge_matrix = create_connectivity_matrix(edges, len(vertices))
+
+        shrunk_values = get_shrunk_nodes(node_values=vertices, edge_matrix=edge_matrix, reg_param=reg_param,
+                                         weights=weights)
+        for i, node in enumerate(tree.value):
+            tree.value[i] = shrunk_values[i]
 
         return tree
 
@@ -192,7 +301,7 @@ class HSTreeClassifier(HSTree, ClassifierMixin):
 class HSTreeClassifierCV(HSTreeClassifier):
     def __init__(self, estimator_: BaseEstimator = None,
                  reg_param_list: List[float] = [0.1, 1, 10, 50, 100, 500],
-                 shrinkage_scheme_: str = 'node_based',
+                 shrinkage_scheme_: str = 'ridge',
                  max_leaf_nodes: int = 20,
                  cv: int = 3, scoring=None, *args, **kwargs):
         """Cross-validation is used to select the best regularization parameter for hierarchical shrinkage.
@@ -225,7 +334,7 @@ class HSTreeClassifierCV(HSTreeClassifier):
     def fit(self, X, y, *args, **kwargs):
         self.scores_ = []
         for reg_param in self.reg_param_list:
-            est = HSTreeClassifier(deepcopy(self.estimator_), reg_param)
+            est = HSTreeClassifier(deepcopy(self.estimator_), reg_param, shrinkage_scheme_=self.shrinkage_scheme_)
             cv_scores = cross_val_score(est, X, y, cv=self.cv, scoring=self.scoring)
             self.scores_.append(np.mean(cv_scores))
         self.reg_param = self.reg_param_list[np.argmax(self.scores_)]
@@ -245,7 +354,7 @@ class HSTreeClassifierCV(HSTreeClassifier):
 class HSTreeRegressorCV(HSTreeRegressor):
     def __init__(self, estimator_: BaseEstimator = None,
                  reg_param_list: List[float] = [0.1, 1, 10, 50, 100, 500],
-                 shrinkage_scheme_: str = 'node_based',
+                 shrinkage_scheme_: str = 'ridge',
                  max_leaf_nodes: int = 20,
                  cv: int = 3, scoring=None, *args, **kwargs):
         """Cross-validation is used to select the best regularization parameter for hierarchical shrinkage.
@@ -278,7 +387,7 @@ class HSTreeRegressorCV(HSTreeRegressor):
     def fit(self, X, y, *args, **kwargs):
         self.scores_ = []
         for reg_param in self.reg_param_list:
-            est = HSTreeRegressor(deepcopy(self.estimator_), reg_param)
+            est = HSTreeRegressor(deepcopy(self.estimator_), reg_param, shrinkage_scheme_=self.shrinkage_scheme_)
             cv_scores = cross_val_score(est, X, y, cv=self.cv, scoring=self.scoring)
             self.scores_.append(np.mean(cv_scores))
         self.reg_param = self.reg_param_list[np.argmax(self.scores_)]

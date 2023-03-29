@@ -15,6 +15,7 @@ required_pypi = [
     'scipy',
     'scikit-learn',  # 0.23+ only works on py3.6+
     'tqdm',  # used in BART
+    "cvxpy"
 ]
 
 extra_deps = [
