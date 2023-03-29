@@ -104,7 +104,7 @@ def get_shrunk_nodes(node_values, edge_matrix, reg_param, weights):
 
 class HSTree:
     def __init__(self, estimator_: BaseEstimator = DecisionTreeClassifier(max_leaf_nodes=20),
-                 reg_param: float = 1, shrinkage_scheme_: str = 'node_based'):
+                 reg_param: float = 1, shrinkage_scheme_: str = 'ridge'):
         """HSTree (Tree with hierarchical shrinkage applied).
         Hierarchical shrinkage is an extremely fast post-hoc regularization method which works on any decision tree (or tree-based ensemble, such as Random Forest).
         It does not modify the tree structure, and instead regularizes the tree by shrinking the prediction over each node towards the sample means of its ancestors (using a single regularization parameter).
