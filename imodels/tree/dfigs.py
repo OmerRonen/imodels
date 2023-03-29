@@ -14,6 +14,8 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.tree import plot_tree, DecisionTreeClassifier
 from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import _check_sample_weight
+from scipy.special import expit
+
 from imodels.tree.figs import FIGSClassifier, FIGS
 from imodels.tree.figs import FIGSRegressor, Node
 from imodels.tree.viz_utils import extract_sklearn_tree_from_figs
@@ -76,10 +78,15 @@ class D_FIGS(FIGS):
                 def _update_root(node):
                     if node is not None:
                         node.idxs = node.idxs[non_na_indices]
+                        node.ps = node in potential_splits
+
+                        if np.sum(node.idxs) == 0:
+                            node.ps = False
+                            return node
 
                         _update_root(node.left_temp)
                         _update_root(node.right_temp)
-                        node.ps = node in potential_splits
+
                         if node.left is None and node.right is None:
                             y_target = y_residuals_per_tree[node.tree_num][non_na_indices]
 
@@ -96,7 +103,8 @@ class D_FIGS(FIGS):
                 potential_splits = []
                 def _update_potential_splits(node):
                     if node is not None:
-                        if node.ps:
+                        is_ps = getattr(node, "ps", False)
+                        if is_ps:
                             potential_splits.append(node)
                         _update_potential_splits(node.left_temp)
                         _update_potential_splits(node.right_temp)
@@ -261,6 +269,39 @@ class D_FIGS(FIGS):
             return preds
         elif isinstance(self, ClassifierMixin):
             return (preds > 0.5).astype(int)
+
+    def predict_proba(self, X, categorical_features=None, use_clipped_prediction=False):
+        """Predict probability for classifiers:
+    Default behavior is to constrain the outputs to the range of probabilities, i.e. 0 to 1, with a sigmoid function.
+    Set use_clipped_prediction=True to use prior behavior of clipping between 0 and 1 instead.
+        """
+        if hasattr(self, "_encoder"):
+            X = self._encode_categories(
+                X, categorical_features=categorical_features)
+        # X = check_array(X)
+        if isinstance(self, RegressorMixin):
+            return NotImplemented
+        preds = np.zeros(X.shape[0])
+        for phase in self.phases:
+            # if phase > 0:
+            #     continue
+            phase_variables = self.phases[phase]
+            # get all non na indices for these variables sum over rows
+            X_phase = X[:, phase_variables]
+            non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
+            X_phase = X_phase[non_na_indices,:]
+            preds[non_na_indices] = 0
+            for tree in self.model_phases[phase]:
+                preds[non_na_indices] += self._predict_tree(tree, X_phase)
+        if use_clipped_prediction:
+            # old behavior, pre v1.3.9
+            # constrain to range of probabilities by clipping
+            preds = np.clip(preds, a_min=0., a_max=1.)
+        else:
+            # constrain to range of probabilities with a sigmoid function
+            preds = expit(preds)
+        return np.vstack((1 - preds, preds)).transpose()
+
 
 
 class D_FIGSRegressor(D_FIGS, RegressorMixin):
