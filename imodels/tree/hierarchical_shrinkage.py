@@ -54,7 +54,7 @@ def tree_to_graph(tree):
     for i in range(tree.node_count):
         weights.append(tree.n_node_samples[i])
 
-    return edges, np.array(vertices), np.array(weights)
+    return edges, np.array(vertices), np.array(weights) / np.std(weights)
 
 
 def create_connectivity_matrix(edges, num_vertices):
@@ -235,13 +235,13 @@ class HSTree:
 
     def _shrink(self):
         if hasattr(self.estimator_, 'tree_'):
-            self._shrink_tree(self.estimator_.tree_, self.reg_param)
+            self.estimator_.tree_ = self._shrink_tree(self.estimator_.tree_, self.reg_param)
         elif hasattr(self.estimator_, 'estimators_'):
             for t in self.estimator_.estimators_:
                 if isinstance(t, np.ndarray):
                     assert t.size == 1, 'multiple trees stored under tree_?'
                     t = t[0]
-                self._shrink_tree(t.tree_, self.reg_param)
+                t.tree_ = self._shrink_tree(t.tree_, self.reg_param)
 
     def predict(self, X, *args, **kwargs):
         return self.estimator_.predict(X, *args, **kwargs)
