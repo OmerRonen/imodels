@@ -189,7 +189,7 @@ class HSTree:
 
         # if has parent
         else:
-            if self.shrinkage_scheme_ == 'node_based':
+            if self.shrinkage_scheme_ == 'ridge':
                 val_new = (val - parent_val) / (1 + reg_param / parent_num)
             elif self.shrinkage_scheme_ == 'constant':
                 val_new = (val - parent_val) / (1 + reg_param)
@@ -198,7 +198,7 @@ class HSTree:
             cum_sum += val_new
 
         # Step 2: Update node values
-        if self.shrinkage_scheme_ == 'node_based' or self.shrinkage_scheme_ == 'constant':
+        if self.shrinkage_scheme_ == 'ridge' or self.shrinkage_scheme_ == 'constant':
             tree.value[i, :, :] = cum_sum
         else:  # leaf_based
             if is_leaf:  # update node values if leaf_based
@@ -338,6 +338,7 @@ class HSTreeClassifierCV(HSTreeClassifier):
             cv_scores = cross_val_score(est, X, y, cv=self.cv, scoring=self.scoring)
             self.scores_.append(np.mean(cv_scores))
         self.reg_param = self.reg_param_list[np.argmax(self.scores_)]
+        print("param selected:", self.reg_param, "shrinkage scheme:", self.shrinkage_scheme_)
         super().fit(X=X, y=y, *args, **kwargs)
 
     def __repr__(self):
@@ -353,7 +354,7 @@ class HSTreeClassifierCV(HSTreeClassifier):
 
 class HSTreeRegressorCV(HSTreeRegressor):
     def __init__(self, estimator_: BaseEstimator = None,
-                 reg_param_list: List[float] = [0.1, 1, 10, 50, 100, 500],
+                 reg_param_list: List[float] = [0.1, 1, 10, 50, 100, 500, 1000, 10000, 100000, 1000000],
                  shrinkage_scheme_: str = 'ridge',
                  max_leaf_nodes: int = 20,
                  cv: int = 3, scoring=None, *args, **kwargs):
@@ -391,6 +392,7 @@ class HSTreeRegressorCV(HSTreeRegressor):
             cv_scores = cross_val_score(est, X, y, cv=self.cv, scoring=self.scoring)
             self.scores_.append(np.mean(cv_scores))
         self.reg_param = self.reg_param_list[np.argmax(self.scores_)]
+        print("param selected:", self.reg_param, "shrinkage scheme:", self.shrinkage_scheme_)
         super().fit(X=X, y=y, *args, **kwargs)
 
     def __repr__(self):
