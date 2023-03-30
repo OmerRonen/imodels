@@ -1,5 +1,7 @@
 import copy
+import time
 
+import matplotlib.pyplot as plt
 import numpy as np
 import cvxpy as cp
 
@@ -7,11 +9,12 @@ from copy import deepcopy
 from typing import List
 from sklearn import datasets
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
-from sklearn.metrics import r2_score
+from sklearn.datasets import load_iris, make_friedman1
+from sklearn.metrics import r2_score, accuracy_score, mean_squared_error
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier, \
-    export_text
+    export_text, plot_tree
 from sklearn.ensemble import GradientBoostingClassifier
 
 from imodels.util import checks
@@ -96,8 +99,8 @@ def get_shrunk_nodes(node_values, edge_matrix, reg_param, weights):
     # Gurobi offers free academic licenses but you can change this to a
     # free solver
     # https://www.cvxpy.org/tutorial/advanced/index.html#choosing-a-solver
-    # prob.solve(solver=cp.GUROBI)
-    prob.solve(solver=cp.OSQP)
+    prob.solve(solver=cp.GUROBI)
+    # prob.solve(solver=cp.OSQP)
     return theta.value
 
 
@@ -406,42 +409,106 @@ class HSTreeRegressorCV(HSTreeRegressor):
         return s
 
 
+def compare_time():
+
+    # Load the iris dataset
+    X, y = make_friedman1(n_samples=1000)
+    # generate different regression targets
+    # y = X[:, 0] + np.sin(X[:, 1])
+    # X = iris.data
+    # y = iris.target
+
+    # Split the data into training and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+    # Train a decision tree on the training data
+    clf = DecisionTreeRegressor(random_state=42)
+    clf.fit(X_train, y_train)
+
+    # Define a function to perform cost complexity pruning
+    # Define a function to perform cost complexity pruning using cross-validation
+    def cost_complexity_pruning_cv(reg, X_train, y_train):
+        # Calculate the alpha values to test
+        path = reg.cost_complexity_pruning_path(X_train, y_train)
+        ccp_alphas = path.ccp_alphas
+
+        # Train a series of regression trees with different alpha values
+        regs = []
+        for ccp_alpha in ccp_alphas:
+            reg = DecisionTreeRegressor(random_state=42, ccp_alpha=ccp_alpha)
+            reg.fit(X_train, y_train)
+            regs.append(reg)
+
+        # Evaluate the performance of each pruned tree using cross-validation
+        cv_scores = []
+        for reg in regs:
+            scores = cross_val_score(reg, X_train, y_train, cv=5)
+            cv_scores.append(np.mean(scores))
+
+        # Find the alpha value that gives the best cross-validation score
+        best_alpha = ccp_alphas[np.argmax(cv_scores)]
+        print("Best alpha:", best_alpha)
+
+        # Train a final regression tree with the best alpha value
+        final_reg = DecisionTreeRegressor(random_state=42, ccp_alpha=best_alpha)
+        final_reg.fit(X_train, y_train)
+
+        return final_reg
+    s = time.time()
+    # Perform cost complexity pruning on the decision tree
+    pruned_clf = cost_complexity_pruning_cv(clf, X_train, y_train)
+    total_time_ccp = time.time() - s
+
+    s = time.time()
+    hs_tv = HSTreeRegressorCV(deepcopy(clf), reg_param=3, shrinkage_scheme_='tv')
+    total_time_tv = time.time() - s
+    # get tv and ccp predictions on the test set and print the rmse
+    print("ccp:", np.sqrt(mean_squared_error(y_test, pruned_clf.predict(X_test))))
+    print("tv:", np.sqrt(mean_squared_error(y_test, hs_tv.predict(X_test))))
+    print("cart:", np.sqrt(mean_squared_error(y_test, clf.predict(X_test))))
+
+    print("ccp:", total_time_ccp, "tv:", total_time_tv)
+    # fig, ax = plt.subplots(1)
+    # plot_tree(hs_tv.estimator_, ax=ax)
+    # plt.show()
+
 if __name__ == '__main__':
-    np.random.seed(15)
-    # X, y = datasets.fetch_california_housing(return_X_y=True)  # regression
-    # X, y = datasets.load_breast_cancer(return_X_y=True)  # binary classification
-    X, y = datasets.load_diabetes(return_X_y=True)  # regression
-    # X = np.random.randn(500, 10)
-    # y = (X[:, 0] > 0).astype(float) + (X[:, 1] > 1).astype(float)
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.33, random_state=10
-    )
-    print('X.shape', X.shape)
-    print('ys', np.unique(y_train))
-
-    # m = HSTree(estimator_=DecisionTreeClassifier(), reg_param=0.1)
-    # m = DecisionTreeClassifier(max_leaf_nodes = 20,random_state=1, max_features=None)
-    m = DecisionTreeRegressor(random_state=42, max_leaf_nodes=20)
+    compare_time()
+    # np.random.seed(15)
+    # # X, y = datasets.fetch_california_housing(return_X_y=True)  # regression
+    # # X, y = datasets.load_breast_cancer(return_X_y=True)  # binary classification
+    # X, y = datasets.load_diabetes(return_X_y=True)  # regression
+    # # X = np.random.randn(500, 10)
+    # # y = (X[:, 0] > 0).astype(float) + (X[:, 1] > 1).astype(float)
+    #
+    # X_train, X_test, y_train, y_test = train_test_split(
+    #     X, y, test_size=0.33, random_state=10
+    # )
+    # print('X.shape', X.shape)
+    # print('ys', np.unique(y_train))
+    #
+    # # m = HSTree(estimator_=DecisionTreeClassifier(), reg_param=0.1)
+    # # m = DecisionTreeClassifier(max_leaf_nodes = 20,random_state=1, max_features=None)
+    # m = DecisionTreeRegressor(random_state=42, max_leaf_nodes=20)
+    # # print('best alpha', m.reg_param)
+    # m.fit(X_train, y_train)
+    # # m.predict_proba(X_train)  # just run this
+    # print('score', r2_score(y_test, m.predict(X_test)))
+    # print('running again....')
+    #
+    # # x = DecisionTreeRegressor(random_state = 42, ccp_alpha = 0.3)
+    # # x.fit(X_train,y_train)
+    #
+    # # m = HSTree(estimator_=DecisionTreeRegressor(random_state=42, max_features=None), reg_param=10)
+    # # m = HSTree(estimator_=DecisionTreeClassifier(random_state=42, max_features=None), reg_param=0)
+    # m = HSTreeClassifierCV(estimator_=DecisionTreeRegressor(max_leaf_nodes=10, random_state=1),
+    #                        shrinkage_scheme_='node_based',
+    #                        reg_param_list=[0.1, 1, 2, 5, 10, 25, 50, 100, 500])
+    # # m = ShrunkTreeCV(estimator_=DecisionTreeClassifier())
+    #
+    # # m = HSTreeClassifier(estimator_ = GradientBoostingClassifier(random_state = 10),reg_param = 5)
+    # m.fit(X_train, y_train)
     # print('best alpha', m.reg_param)
-    m.fit(X_train, y_train)
-    # m.predict_proba(X_train)  # just run this
-    print('score', r2_score(y_test, m.predict(X_test)))
-    print('running again....')
-
-    # x = DecisionTreeRegressor(random_state = 42, ccp_alpha = 0.3)
-    # x.fit(X_train,y_train)
-
-    # m = HSTree(estimator_=DecisionTreeRegressor(random_state=42, max_features=None), reg_param=10)
-    # m = HSTree(estimator_=DecisionTreeClassifier(random_state=42, max_features=None), reg_param=0)
-    m = HSTreeClassifierCV(estimator_=DecisionTreeRegressor(max_leaf_nodes=10, random_state=1),
-                           shrinkage_scheme_='node_based',
-                           reg_param_list=[0.1, 1, 2, 5, 10, 25, 50, 100, 500])
-    # m = ShrunkTreeCV(estimator_=DecisionTreeClassifier())
-
-    # m = HSTreeClassifier(estimator_ = GradientBoostingClassifier(random_state = 10),reg_param = 5)
-    m.fit(X_train, y_train)
-    print('best alpha', m.reg_param)
-    # m.predict_proba(X_train)  # just run this
-    # print('score', m.score(X_test, y_test))
-    print('score', r2_score(y_test, m.predict(X_test)))
+    # # m.predict_proba(X_train)  # just run this
+    # # print('score', m.score(X_test, y_test))
+    # print('score', r2_score(y_test, m.predict(X_test)))
