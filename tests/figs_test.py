@@ -64,7 +64,7 @@ class TestFIGS:
             FIGSExtClassifier, FIGSExtRegressor,
             FIGSClassifierCV, FIGSRegressorCV,
             partial(BaggingClassifier,
-                    base_estimator=FIGSExtClassifier(max_features='auto',
+                    base_estimator=FIGSExtClassifier(
                                                      max_rules=3),
                     n_estimators=2),
         ]:
