@@ -7,6 +7,8 @@ import cvxpy as cp
 
 from copy import deepcopy
 from typing import List
+
+from cvxpy import SolverError
 from sklearn import datasets
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.datasets import load_iris, make_friedman1
@@ -99,7 +101,10 @@ def get_shrunk_nodes(node_values, edge_matrix, reg_param, weights):
     # Gurobi offers free academic licenses but you can change this to a
     # free solver
     # https://www.cvxpy.org/tutorial/advanced/index.html#choosing-a-solver
-    prob.solve(solver=cp.GUROBI)
+    try:
+        prob.solve(solver=cp.GUROBI)
+    except SolverError:
+        prob.solve(solver=cp.OSQP)
     # prob.solve(solver=cp.OSQP)
     return theta.value
 

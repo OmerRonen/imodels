@@ -65,6 +65,7 @@ class D_FIGS(FIGS):
             self.complexity_phase_ = 0  # tracks the number of rules in the model
 
             X_phase = X[:, features]
+            print(X_phase.shape)
             y_phase = y
             # get non na indices in X_phase
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
@@ -73,6 +74,7 @@ class D_FIGS(FIGS):
 
             idxs = np.ones(X_phase.shape[0], dtype=bool)
             if phase > 0:
+                print(phase)
                 # potential_splits = [node for node in potential_splits if not node.is_root]
                 # updating tree
                 def _update_root(node):
@@ -243,6 +245,8 @@ class D_FIGS(FIGS):
 
                 _annotate_node(tree_, X_phase, y_phase)
             self.model_phases[phase] = copy.deepcopy(self.trees_)
+            X = X[non_na_indices, :]
+            y = y[non_na_indices]
 
         return self
 
