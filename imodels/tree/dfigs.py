@@ -306,6 +306,46 @@ class D_FIGS(FIGS):
             preds = expit(preds)
         return np.vstack((1 - preds, preds)).transpose()
 
+    def plot(self, cols=2, feature_names=None, filename=None, label="all",
+             impurity=False, tree_number=None, dpi=150, fig_size=None):
+        is_single_tree = len(self.trees_) < 2 or tree_number is not None
+        n_cols = int(cols)
+        n_rows = int(np.ceil(len(self.trees_) / n_cols))
+
+        if feature_names is None:
+            if hasattr(self, 'feature_names_') and self.feature_names_ is not None:
+                feature_names = self.feature_names_
+
+        n_plots = int(len(self.trees_)) if tree_number is None else 1
+        fig, axs = plt.subplots(n_plots, dpi=dpi)
+        if fig_size is not None:
+            fig.set_size_inches(fig_size, fig_size)
+
+        n_classes = 1 if isinstance(self, RegressorMixin) else 2
+        ax_size = int(len(self.trees_))
+        for i in range(n_plots):
+            r = i // n_cols
+            c = i % n_cols
+            if not is_single_tree:
+                ax = axs[i]
+            else:
+                ax = axs
+            try:
+                dt = extract_sklearn_tree_from_figs(
+                    self, i if tree_number is None else tree_number, n_classes)
+                plot_tree(dt, ax=ax, feature_names=feature_names,
+                          label=label, impurity=impurity, proportion=True, fontsize=4)
+            except IndexError:
+                ax.axis('off')
+                continue
+            ttl = f"Tree {i}" if n_plots > 1 else f"Tree {tree_number}"
+            ax.set_title(ttl)
+        if filename is not None:
+            plt.savefig(filename)
+            return
+        plt.show()
+
+
 
 
 class D_FIGSRegressor(D_FIGS, RegressorMixin):
