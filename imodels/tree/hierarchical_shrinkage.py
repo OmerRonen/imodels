@@ -40,10 +40,12 @@ def tree_to_graph(tree):
     vertices = list()
     for i in range(tree.node_count):
         # if tree.children_left[i] == tree.children_right[i]:  # leaf node
-        value = tree.value[i][0][0]  # get the value at the leaf node
+        value = tree.value[i][0]  # get the value at the leaf node
         # if value is not a scalar, then we normalize it
-        if value.shape:
+        if len(value) > 1:
             value = value / np.sum(value)
+        value = value[0]
+
 
         vertices.append(value)
 
@@ -59,7 +61,7 @@ def tree_to_graph(tree):
     for i in range(tree.node_count):
         weights.append(tree.n_node_samples[i])
 
-    return edges, np.array(vertices), np.array(weights) / np.std(weights)
+    return edges, np.array(vertices), np.array(weights)
 
 
 def create_connectivity_matrix(edges, num_vertices):
@@ -230,14 +232,19 @@ class HSTree:
         if reg_param is None:
             reg_param = 1.0
         # tree = copy.deepcopy(tree)
-        edges, vertices, weights = tree_to_graph(tree)
+        edges, vertices, n_node = tree_to_graph(tree)
+
+        weights = n_node / np.std(n_node)
 
         edge_matrix = create_connectivity_matrix(edges, len(vertices))
 
         shrunk_values = get_shrunk_nodes(node_values=vertices, edge_matrix=edge_matrix, reg_param=reg_param,
                                          weights=weights)
         for i, node in enumerate(tree.value):
-            tree.value[i] = shrunk_values[i]
+            if type(self.estimator_) == DecisionTreeClassifier:
+                tree.value[i] = np.array([shrunk_values[i] * n_node[i], (1 - shrunk_values[i]) * n_node[i]])
+            else:
+                tree.value[i] = shrunk_values[i]
 
         return tree
 
@@ -306,9 +313,13 @@ class HSTreeClassifier(HSTree, ClassifierMixin):
     ...
 
 
+
+# range from 0 to 100 each step ten time the previous one
+reg_param_list = [0, 1e-06,1e-5,1e-4, 0.001, 0.01, 0.1, 1, 10, 50, 100, 500]
+
 class HSTreeClassifierCV(HSTreeClassifier):
     def __init__(self, estimator_: BaseEstimator = None,
-                 reg_param_list: List[float] = [0.1, 1, 10, 50, 100, 500],
+                 reg_param_list: List[float] = reg_param_list,
                  shrinkage_scheme_: str = 'ridge',
                  max_leaf_nodes: int = 20,
                  cv: int = 3, scoring=None, *args, **kwargs):
@@ -362,7 +373,7 @@ class HSTreeClassifierCV(HSTreeClassifier):
 
 class HSTreeRegressorCV(HSTreeRegressor):
     def __init__(self, estimator_: BaseEstimator = None,
-                 reg_param_list: List[float] = [0.1, 1, 10, 50, 100, 500, 1000, 10000, 100000, 1000000],
+                 reg_param_list: List[float] = reg_param_list,
                  shrinkage_scheme_: str = 'ridge',
                  max_leaf_nodes: int = 20,
                  cv: int = 3, scoring=None, *args, **kwargs):
