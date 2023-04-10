@@ -392,7 +392,7 @@ class HSTreeRegressorCV(HSTreeRegressor):
         """
         if estimator_ is None:
             estimator_ = DecisionTreeRegressor(max_leaf_nodes=max_leaf_nodes)
-        super().__init__(estimator_, reg_param=None)
+        super().__init__(estimator_, reg_param=None, shrinkage_scheme_=shrinkage_scheme_)
         self.reg_param_list = np.array(reg_param_list)
         self.cv = cv
         self.scoring = scoring
