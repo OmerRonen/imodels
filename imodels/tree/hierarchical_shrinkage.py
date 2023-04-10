@@ -11,8 +11,8 @@ from typing import List
 from cvxpy import SolverError
 from sklearn import datasets
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
-from sklearn.datasets import load_iris, make_friedman1
-from sklearn.metrics import r2_score, accuracy_score, mean_squared_error
+from sklearn.datasets import load_iris, make_friedman1, load_breast_cancer
+from sklearn.metrics import r2_score, accuracy_score, mean_squared_error, roc_auc_score
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier, \
@@ -428,17 +428,20 @@ class HSTreeRegressorCV(HSTreeRegressor):
 def compare_time():
 
     # Load the iris dataset
-    X, y = make_friedman1(n_samples=1000)
-    # generate different regression targets
-    # y = X[:, 0] + np.sin(X[:, 1])
+    # X, y = make_friedman1(n_samples=1000)
+    # # generate different regression targets
+    # # y = X[:, 0] + np.sin(X[:, 1])
     # X = iris.data
     # y = iris.target
+
+    # load a classification dataset
+    X, y = load_breast_cancer(return_X_y=True)
 
     # Split the data into training and test sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
     # Train a decision tree on the training data
-    clf = DecisionTreeRegressor(random_state=42)
+    clf = DecisionTreeClassifier(random_state=42)
     clf.fit(X_train, y_train)
 
     # Define a function to perform cost complexity pruning
@@ -466,7 +469,7 @@ def compare_time():
         print("Best alpha:", best_alpha)
 
         # Train a final regression tree with the best alpha value
-        final_reg = DecisionTreeRegressor(random_state=42, ccp_alpha=best_alpha)
+        final_reg = DecisionTreeClassifier(random_state=42, ccp_alpha=best_alpha)
         final_reg.fit(X_train, y_train)
 
         return final_reg
@@ -476,12 +479,17 @@ def compare_time():
     total_time_ccp = time.time() - s
 
     s = time.time()
-    hs_tv = HSTreeRegressorCV(deepcopy(clf), reg_param=3, shrinkage_scheme_='tv')
+    hs_tv = HSTreeClassifierCV(deepcopy(clf), shrinkage_scheme_='tv')
     total_time_tv = time.time() - s
     # get tv and ccp predictions on the test set and print the rmse
-    print("ccp:", np.sqrt(mean_squared_error(y_test, pruned_clf.predict(X_test))))
-    print("tv:", np.sqrt(mean_squared_error(y_test, hs_tv.predict(X_test))))
-    print("cart:", np.sqrt(mean_squared_error(y_test, clf.predict(X_test))))
+    # print("ccp:", np.sqrt(mean_squared_error(y_test, pruned_clf.predict(X_test))))
+    # print("tv:", np.sqrt(mean_squared_error(y_test, hs_tv.predict(X_test))))
+    # print("cart:", np.sqrt(mean_squared_error(y_test, clf.predict(X_test))))
+
+    # print the auc for the test set for cart, ccp and tv
+    print("ccp:", roc_auc_score(y_test, pruned_clf.predict_proba(X_test)[:, 1]))
+    print("tv:", roc_auc_score(y_test, hs_tv.predict_proba(X_test)[:, 1]))
+    print("cart:", roc_auc_score(y_test, clf.predict_proba(X_test)[:, 1]))
 
     print("ccp:", total_time_ccp, "tv:", total_time_tv)
     # fig, ax = plt.subplots(1)
