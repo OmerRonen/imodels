@@ -234,7 +234,7 @@ class HSTree:
         # tree = copy.deepcopy(tree)
         edges, vertices, n_node = tree_to_graph(tree)
 
-        weights = n_node / np.std(n_node)
+        weights = np.sqrt(n_node) #/ np.std(n_node)
 
         edge_matrix = create_connectivity_matrix(edges, len(vertices))
 
@@ -315,7 +315,7 @@ class HSTreeClassifier(HSTree, ClassifierMixin):
 
 
 # range from 0 to 100 each step ten time the previous one
-reg_param_list = [0, 1e-06,1e-5,1e-4, 0.001, 0.01, 0.1, 1, 10, 50, 100, 500]
+reg_param_list = np.logspace(-6, 2, 100)
 
 class HSTreeClassifierCV(HSTreeClassifier):
     def __init__(self, estimator_: BaseEstimator = None,
@@ -339,7 +339,7 @@ class HSTreeClassifierCV(HSTreeClassifier):
         """
         if estimator_ is None:
             estimator_ = DecisionTreeClassifier(max_leaf_nodes=max_leaf_nodes)
-        super().__init__(estimator_, reg_param=None)
+        super().__init__(estimator_, reg_param=None, shrinkage_scheme_=shrinkage_scheme_)
         self.reg_param_list = np.array(reg_param_list)
         self.cv = cv
         self.scoring = scoring
@@ -353,7 +353,7 @@ class HSTreeClassifierCV(HSTreeClassifier):
     def fit(self, X, y, *args, **kwargs):
         self.scores_ = []
         for reg_param in self.reg_param_list:
-            est = HSTreeClassifier(deepcopy(self.estimator_), reg_param, shrinkage_scheme_=self.shrinkage_scheme_)
+            est = HSTreeClassifier(deepcopy(self.estimator_), reg_param=reg_param, shrinkage_scheme_=self.shrinkage_scheme_)
             cv_scores = cross_val_score(est, X, y, cv=self.cv, scoring=self.scoring)
             self.scores_.append(np.mean(cv_scores))
         self.reg_param = self.reg_param_list[np.argmax(self.scores_)]
@@ -480,6 +480,7 @@ def compare_time():
 
     s = time.time()
     hs_tv = HSTreeClassifierCV(deepcopy(clf), shrinkage_scheme_='tv')
+    hs_tv.fit(X_train, y_train)
     total_time_tv = time.time() - s
     # get tv and ccp predictions on the test set and print the rmse
     # print("ccp:", np.sqrt(mean_squared_error(y_test, pruned_clf.predict(X_test))))
