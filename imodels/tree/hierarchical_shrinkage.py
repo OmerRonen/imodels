@@ -46,7 +46,6 @@ def tree_to_graph(tree):
             value = value / np.sum(value)
         value = value[0]
 
-
         vertices.append(value)
 
     # Get the set of edges (i.e. the connections between parent and child nodes)
@@ -95,7 +94,7 @@ def get_shrunk_nodes(node_values, edge_matrix, reg_param, weights):
     theta = cp.Variable(n)
     z = cp.Variable(edge_matrix.shape[0])
 
-    fit_term = cp.sum_squares(cp.multiply(weights,(node_values - theta)))
+    fit_term = cp.sum_squares(cp.multiply(weights, (node_values - theta)))
     shrink_term = reg_param * cp.sum(z)
     objective = cp.Minimize(fit_term + shrink_term)
     constraints = [z >= 0, -z <= edge_matrix @ theta, edge_matrix @ theta <= z]
@@ -109,7 +108,6 @@ def get_shrunk_nodes(node_values, edge_matrix, reg_param, weights):
         prob.solve(solver=cp.OSQP)
     # prob.solve(solver=cp.OSQP)
     return theta.value
-
 
 
 class HSTree:
@@ -234,7 +232,7 @@ class HSTree:
         # tree = copy.deepcopy(tree)
         edges, vertices, n_node = tree_to_graph(tree)
 
-        weights = np.sqrt(n_node) #/ np.std(n_node)
+        weights = np.sqrt(n_node)  # / np.std(n_node)
 
         edge_matrix = create_connectivity_matrix(edges, len(vertices))
 
@@ -313,9 +311,9 @@ class HSTreeClassifier(HSTree, ClassifierMixin):
     ...
 
 
-
 # range from 0 to 100 each step ten time the previous one
 reg_param_list = np.logspace(-6, 2, 100)
+
 
 class HSTreeClassifierCV(HSTreeClassifier):
     def __init__(self, estimator_: BaseEstimator = None,
@@ -353,7 +351,8 @@ class HSTreeClassifierCV(HSTreeClassifier):
     def fit(self, X, y, *args, **kwargs):
         self.scores_ = []
         for reg_param in self.reg_param_list:
-            est = HSTreeClassifier(deepcopy(self.estimator_), reg_param=reg_param, shrinkage_scheme_=self.shrinkage_scheme_)
+            est = HSTreeClassifier(deepcopy(self.estimator_), reg_param=reg_param,
+                                   shrinkage_scheme_=self.shrinkage_scheme_)
             cv_scores = cross_val_score(est, X, y, cv=self.cv, scoring=self.scoring)
             self.scores_.append(np.mean(cv_scores))
         self.reg_param = self.reg_param_list[np.argmax(self.scores_)]
@@ -426,7 +425,6 @@ class HSTreeRegressorCV(HSTreeRegressor):
 
 
 def compare_time():
-
     # Load the iris dataset
     # X, y = make_friedman1(n_samples=1000)
     # # generate different regression targets
@@ -473,6 +471,7 @@ def compare_time():
         final_reg.fit(X_train, y_train)
 
         return final_reg
+
     s = time.time()
     # Perform cost complexity pruning on the decision tree
     pruned_clf = cost_complexity_pruning_cv(clf, X_train, y_train)
@@ -496,6 +495,7 @@ def compare_time():
     # fig, ax = plt.subplots(1)
     # plot_tree(hs_tv.estimator_, ax=ax)
     # plt.show()
+
 
 if __name__ == '__main__':
     compare_time()
