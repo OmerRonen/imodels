@@ -93,11 +93,14 @@ def get_shrunk_nodes(node_values, edge_matrix, reg_param, weights):
 
     theta = cp.Variable(n)
     z = cp.Variable(edge_matrix.shape[0])
+    h_diff = edge_matrix @ theta
+
 
     fit_term = cp.sum_squares(cp.multiply(weights, (node_values - theta)))
-    shrink_term = reg_param * cp.sum(z)
+    # add l-2 norm of h diff to shrink term
+    shrink_term = reg_param * (cp.sum(z) + cp.sum_squares(h_diff))
     objective = cp.Minimize(fit_term + shrink_term)
-    constraints = [z >= 0, -z <= edge_matrix @ theta, edge_matrix @ theta <= z]
+    constraints = [z >= 0, -z <= h_diff, h_diff <= z]
     prob = cp.Problem(objective, constraints)
     # Gurobi offers free academic licenses but you can change this to a
     # free solver
@@ -179,6 +182,7 @@ class HSTree:
     def _shrink_tree_ridge(self, tree, reg_param, i=0, parent_val=None, parent_num=None, cum_sum=0):
         """Shrink the tree
         """
+        # print('ridge shrinkage')
         if reg_param is None:
             reg_param = 1.0
         left = tree.children_left[i]
@@ -227,6 +231,7 @@ class HSTree:
         return tree
 
     def _shrink_tree_tv(self, tree, reg_param, i=0, parent_val=None, parent_num=None, cum_sum=0):
+        # print('tv shrinkage')
         if reg_param is None:
             reg_param = 1.0
         # tree = copy.deepcopy(tree)
