@@ -21,6 +21,44 @@ from imodels.tree.figs import FIGSRegressor, Node
 from imodels.tree.viz_utils import extract_sklearn_tree_from_figs
 
 
+class DynamicEstimator(BaseEstimator):
+    def __init__(self, estimator, phases: dict):
+        self.estimator = estimator
+        self.phases = phases
+
+    def fit(self, X, y, feature_names=None):
+        if isinstance(self, ClassifierMixin):
+            self.classes_, y = np.unique(y, return_inverse=True)  # deals with str inputs
+
+        if feature_names is None:
+            if isinstance(X, pd.DataFrame):
+                self.feature_names_ = X.columns
+        else:
+            self.feature_names_ = feature_names
+
+        self.model_phases = {i: None for i in range(len(self.phases))}
+        for phase, features in self.phases.items():
+            X_phase = X[:, features]
+            print(X_phase.shape)
+            y_phase = y
+            # get non na indices in X_phase
+            non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
+            X_phase = X_phase[non_na_indices, :]
+            y_phase = y_phase[non_na_indices]
+            # if phase is not first make y_phase the residuals of the sum of the previous phases
+            if phase != 0:
+                y_phase = y_phase - np.sum([self.model_phases[i].predict(X_phase) for i in range(phase)], axis=0)
+            est_phase = copy.deepcopy(self.estimator)
+            self.model_phases[phase] = est_phase.fit(X_phase, y_phase)
+
+    def predict(self, X):
+        # TODO: implement predict
+        raise NotImplementedError
+
+    def predict_proba(self, X):
+        # TODO: implement predict_proba
+        raise NotImplementedError
+
 class D_FIGS(FIGS):
 
     def __init__(self,max_rules: int = 12, max_trees: int = None, min_impurity_decrease: float = 0.0, random_state=None,
