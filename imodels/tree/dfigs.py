@@ -528,7 +528,7 @@ if __name__ == '__main__':
     plt.ylabel('True Positive Rate')
     plt.title('ROC curve on testing data with dfigs')
     plt.legend(loc="lower right")
-    plt.savefig('dfigs.png')
+    plt.savefig('DynamicEstimatorResult/dfigs.png')
 
 
     fpr_lasso, tpr_lasso, _lasso = roc_curve(y_test_c.values, lasso_pred[:, 1])
@@ -539,7 +539,7 @@ if __name__ == '__main__':
     plt.ylabel('True Positive Rate')
     plt.title('ROC curve on testing data with lasso')
     plt.legend(loc="lower right")
-    plt.savefig('lasso.png')
+    plt.savefig('DynamicEstimatorResult/lasso.png')
 
 
 
@@ -559,4 +559,4 @@ if __name__ == '__main__':
     plt.ylabel('True Positive Rate')
     plt.title('ROC curve on testing data with lasso')
     plt.legend(loc="lower right")
-    plt.savefig('lasso_with_separate_phase.png')
+    plt.savefig('DynamicEstimatorResult/lasso_with_separate_phase.png')
