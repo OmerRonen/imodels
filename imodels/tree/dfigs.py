@@ -16,9 +16,13 @@ from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import _check_sample_weight
 from scipy.special import expit
 
-from imodels.tree.figs import FIGSClassifier, FIGS
-from imodels.tree.figs import FIGSRegressor, Node
+from figs import FIGSClassifier, FIGS
+from figs import FIGSRegressor, Node
+from sklearn import linear_model
 from imodels.tree.viz_utils import extract_sklearn_tree_from_figs
+from dynamic_cdi import *
+from sklearn.metrics import roc_curve, auc
+from rulevetting.projects.tbi_pecarn.dataset import Dataset as tbiDataset
 
 
 class DynamicEstimator(BaseEstimator):
@@ -36,34 +40,69 @@ class DynamicEstimator(BaseEstimator):
         else:
             self.feature_names_ = feature_names
 
+        y_copy = y.copy()
+        X_copy = X.copy()
+        self.phase_i_y = {i: None for i in range(len(self.phases))}
         self.model_phases = {i: None for i in range(len(self.phases))}
         for phase, features in self.phases.items():
-            X_phase = X[:, features]
-            print(X_phase.shape)
-            y_phase = y
+            X_phase = X_copy.iloc[:, features]
+            y_phase = y_copy
+            #print(y_phase)
+            print("sum:", np.sum(y_phase))
             # get non na indices in X_phase
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
-            X_phase = X_phase[non_na_indices, :]
-            y_phase = y_phase[non_na_indices]
+            print(non_na_indices, len(non_na_indices))
+            #print("checkNa", np.sum(np.isnan(X_phase), axis=1))
+            X_phase = X_phase.iloc[non_na_indices, :]
+            y_phase = y_phase.iloc[non_na_indices]
             # if phase is not first make y_phase the residuals of the sum of the previous phases
-            if phase != 0:
-                y_phase = y_phase - np.sum([self.model_phases[i].predict(X_phase) for i in range(phase)], axis=0)
+            # if phase != 0:
+            #    y_phase = y_phase - np.sum([self.phase_i_y[i] for i in range(phase)], axis=0)
             est_phase = copy.deepcopy(self.estimator)
             self.model_phases[phase] = est_phase.fit(X_phase, y_phase)
+            print("predic sum:", np.sum(est_phase.predict(X_phase)))
+            # update the original y since the dimension is changing for each phase
+            y_copy.iloc[non_na_indices] -= est_phase.predict(X_phase)
 
     def predict(self, X):
         # TODO: implement predict
-        raise NotImplementedError
+        X = check_array(X)
+        preds = np.zeros(X.shape[0])
+        for i in range(len(self.model_phases)):
+            features = self.phases[i]
+            X_phase = X.iloc[:, features]
+            non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
+            X_phase = X_phase.iloc[non_na_indices, :]
+            preds += self.model_phases[i].predict(X_phase)
+        print("DEDE", preds)
+        return preds
 
-    def predict_proba(self, X):
+    def predict_proba(self, X, use_clipped_prediction=False):
         # TODO: implement predict_proba
-        raise NotImplementedError
+        preds = np.zeros(X.shape[0])
+        for i in range(len(self.model_phases)):
+            features = self.phases[i]
+            X_phase = X.iloc[:, features]
+            non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
+            X_phase = X_phase.iloc[non_na_indices, :]
+            preds += self.model_phases[i].predict(X_phase)
+
+        if use_clipped_prediction:
+            # old behavior, pre v1.3.9
+            # constrain to range of probabilities by clipping
+            preds = np.clip(preds, a_min=0., a_max=1.)
+        else:
+            # constrain to range of probabilities with a sigmoid function
+            preds = expit(preds)
+        return np.vstack((1 - preds, preds)).transpose()
+
 
 class D_FIGS(FIGS):
 
-    def __init__(self,max_rules: int = 12, max_trees: int = None, min_impurity_decrease: float = 0.0, random_state=None,
-                 max_features: str = None, phases:dict=None):
-        super().__init__(max_rules,max_trees, min_impurity_decrease, random_state, max_features)
+    def __init__(self, max_rules: int = 12, max_trees: int = None, min_impurity_decrease: float = 0.0,
+                 random_state=None,
+                 max_features: str = None, phases: dict = None):
+        super().__init__(max_rules, max_trees, min_impurity_decrease, random_state, max_features)
         self.phases = phases
 
     def fit(self, X, y=None, feature_names=None, verbose=False, sample_weight=None, categorical_features=None):
@@ -113,6 +152,7 @@ class D_FIGS(FIGS):
             idxs = np.ones(X_phase.shape[0], dtype=bool)
             if phase > 0:
                 print(phase)
+
                 # potential_splits = [node for node in potential_splits if not node.is_root]
                 # updating tree
                 def _update_root(node):
@@ -139,8 +179,10 @@ class D_FIGS(FIGS):
 
                         if node.is_root:
                             return node
+
                 self.trees_ = [_update_root(node) for node in self.trees_]
                 potential_splits = []
+
                 def _update_potential_splits(node):
                     if node is not None:
                         is_ps = getattr(node, "ps", False)
@@ -148,6 +190,7 @@ class D_FIGS(FIGS):
                             potential_splits.append(node)
                         _update_potential_splits(node.left_temp)
                         _update_potential_splits(node.right_temp)
+
                 for tree in self.trees_:
                     _update_potential_splits(tree)
 
@@ -257,6 +300,7 @@ class D_FIGS(FIGS):
             # annotate final tree with node_id and value_sklearn
             for tree_ in self.trees_:
                 node_counter = iter(range(0, int(1e06)))
+
                 def _annotate_node(node: Node, X, y):
                     if node is None:
                         return
@@ -301,7 +345,7 @@ class D_FIGS(FIGS):
             # get all non na indices for these variables sum over rows
             X_phase = X[:, phase_variables]
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
-            X_phase = X_phase[non_na_indices,:]
+            X_phase = X_phase[non_na_indices, :]
             preds[non_na_indices] = 0
             for tree in self.model_phases[phase]:
                 preds[non_na_indices] += self._predict_tree(tree, X_phase)
@@ -331,7 +375,7 @@ class D_FIGS(FIGS):
             # get all non na indices for these variables sum over rows
             X_phase = X[:, phase_variables]
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
-            X_phase = X_phase[non_na_indices,:]
+            X_phase = X_phase[non_na_indices, :]
             preds[non_na_indices] = 0
             for tree in self.model_phases[phase]:
                 preds[non_na_indices] += self._predict_tree(tree, X_phase)
@@ -384,8 +428,6 @@ class D_FIGS(FIGS):
         plt.show()
 
 
-
-
 class D_FIGSRegressor(D_FIGS, RegressorMixin):
     ...
 
@@ -394,7 +436,45 @@ class D_FIGSClassifier(D_FIGS, ClassifierMixin):
     ...
 
 
+def get_each_phase(columns):
+    df_label = pd.read_csv('data/tbi_pecarn/TBI variables with label.csv')
+    df_label = df_label.rename(
+        columns={'Time (Aaron) 1= Prehospital, 2=primary survey, 3= first 1 hour, 4= > 1hour': 'timestamp'})
+    time_distribution = df_label.groupby('timestamp')['Variable Name'].agg(list)
 
+    phases = {0: [], 1: [], 2: []}  # 0: prehospital, 1: hospital
+
+    phase_1_features = time_distribution[0]
+    phase_2_features = time_distribution[2]
+    phase_3_features = time_distribution[3] + time_distribution[4]
+    for feature in phase_1_features:
+        # get all columns names that start with feature
+        # set of new indices
+        new_indices = [i for i, f in enumerate(columns) if f.startswith(feature)]
+        phases[0] += new_indices
+    # phases[1] = set(phases[0])
+    for feature in phase_2_features:
+        # get all columns names that start with feature
+
+        new_indices = [i for i, f in enumerate(columns) if f.startswith(feature)]
+        phases[1] += new_indices
+    for feature in phase_3_features:
+        # get all columns names that start with feature
+
+        new_indices = [i for i, f in enumerate(columns) if f.startswith(feature)]
+        phases[2] += new_indices
+
+    # convert to numpy arrays
+    phases[0] = np.array(phases[0])
+    phases[1] = np.array(phases[1])
+    phases[2] = np.array(phases[2])
+
+    # phases[0] = list(set(phases[0]))
+    # phases[0].sort()
+    # phases[1] = list(set(phases[1]))
+    # phases[1].sort()
+
+    return phases
 
 if __name__ == '__main__':
     X, y = make_friedman1(n_samples=1000, n_features=5, random_state=0)
@@ -403,6 +483,80 @@ if __name__ == '__main__':
     X[0:int(0.6 * X.shape[0]), [p for p in phases[1] if p not in phases[0]]] = np.nan
     d_figs = D_FIGSRegressor(phases=phases, max_rules=3, max_trees=1)
     d_figs.fit(X, y)
-    print(d_figs)
+
+    # Compare dfigs and lasso
+    X, y = get_tbi_data()
+    #print(X.shape[0])
+
+    X.to_csv('get_tbi_data_X.csv', index=False)
+    y.to_csv('get_tbi_data_y.csv', index=False)
+    # split to train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.6, random_state=42)
+
+    d_figs = D_FIGSClassifier(phases=phases)
+    d_figs.fit(X_train.values, y_train.values)
+    d_fig_pred = d_figs.predict_proba(X_test.values)
 
 
+    # LASSO predic_proba data
+    X_copy = X.copy()
+    y_copy = y.copy()
+    df = pd.concat([X_copy, y_copy], axis=1)
+    df.dropna(inplace=True)
+    X_copy = df.iloc[:, :-1]
+    y_copy = df.iloc[:, -1]
+    X_train_c, X_test_c, y_train_c, y_test_c = train_test_split(X_copy, y_copy, test_size=0.6, random_state=42)
+
+    phases = get_phases(X.columns)
+
+    clf_lasso = linear_model.Lasso(alpha=0.1)
+    dynamic_est = DynamicEstimator(clf_lasso, phases)
+    dynamic_est.fit(X_train_c, y_train_c)
+    lasso_pred = dynamic_est.predict_proba(X_test_c)
+
+
+    # fig, ax = plt.subplots(1, 3, figsize=(15, 15))
+    fpr_dfigs, tpr_dfigs, _dfigs = roc_curve(y_test, d_fig_pred[:, 1])
+
+
+    roc_auc_dfigs = auc(fpr_dfigs, tpr_dfigs)
+
+    # ax.plot(fpr_dfigs, tpr_dfigs, label=f"{d_figs} (area = {roc_auc_dfigs:.2f})")
+    plt.plot(fpr_dfigs, tpr_dfigs, label='dfigs (AUC = %0.2f)' % roc_auc_dfigs)
+    plt.plot([0, 1], [0, 1], color='navy', linestyle='--')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC curve on testing data with dfigs')
+    plt.legend(loc="lower right")
+    plt.savefig('dfigs.png')
+
+
+    fpr_lasso, tpr_lasso, _lasso = roc_curve(y_test_c.values, lasso_pred[:, 1])
+    roc_auc_lasso = auc(fpr_lasso, tpr_lasso)
+    plt.plot(fpr_lasso, tpr_lasso, label='lasso f(x1+x2) (AUC = %0.2f)' % roc_auc_lasso)
+    plt.plot([0, 1], [0, 1], color='navy', linestyle='--')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC curve on testing data with lasso')
+    plt.legend(loc="lower right")
+    plt.savefig('lasso.png')
+
+
+
+    
+    # Lasso additive phase
+    lasso_phase = get_each_phase(X_copy.columns)
+    clf_lasso = linear_model.Lasso(alpha=0.1)
+    dynamic_est = DynamicEstimator(clf_lasso, lasso_phase)
+    dynamic_est.fit(X_train_c, y_train_c)
+    lasso_pred = dynamic_est.predict_proba(X_test_c)
+    fpr_lasso, tpr_lasso, _lasso = roc_curve(y_test_c.values, lasso_pred[:, 1])
+    roc_auc_lasso = auc(fpr_lasso, tpr_lasso)
+
+    plt.plot(fpr_lasso, tpr_lasso, label='lasso f(x1) + f(x2) (AUC = %0.2f)' % roc_auc_lasso)
+    plt.plot([0, 1], [0, 1], color='navy', linestyle='--')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC curve on testing data with lasso')
+    plt.legend(loc="lower right")
+    plt.savefig('lasso_with_separate_phase.png')
