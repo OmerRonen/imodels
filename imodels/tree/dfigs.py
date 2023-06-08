@@ -20,6 +20,16 @@ from imodels.tree.figs import FIGSClassifier, FIGS
 from imodels.tree.figs import FIGSRegressor, Node
 from imodels.tree.viz_utils import extract_sklearn_tree_from_figs
 
+def compute_sample_weight(y):
+    sample_weight =  np.zeros(len(y))
+    one_count = pd.Series(y).value_counts()[1.0]
+    one_proportion = one_count/y.shape[0]
+    for i in range(len(y)):
+        if y[i] == 1:
+            sample_weight[i] = 1.0/one_proportion
+        else:
+            sample_weight[i] = 1.0
+    return sample_weight
 
 class D_FIGS(FIGS):
 
@@ -28,7 +38,7 @@ class D_FIGS(FIGS):
         super().__init__(max_rules,max_trees, min_impurity_decrease, random_state, max_features)
         self.phases = phases
 
-    def fit(self, X, y=None, feature_names=None, verbose=False, sample_weight=None, categorical_features=None):
+    def fit(self, X, y=None, feature_names=None, verbose=False, sample_weight=None, use_class_weight = False, categorical_features=None):
         """
         Params
         ------
@@ -63,6 +73,8 @@ class D_FIGS(FIGS):
         potential_splits = []
         for phase, features in self.phases.items():
             self.complexity_phase_ = 0  # tracks the number of rules in the model
+            
+            
 
             X_phase = X[:, features]
             print(X_phase.shape)
@@ -71,6 +83,11 @@ class D_FIGS(FIGS):
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
             X_phase = X_phase[non_na_indices, :]
             y_phase = y_phase[non_na_indices]
+            
+            if use_class_weight:
+                sample_weight = compute_sample_weight(y_phase)
+            else:
+                sample_weight = sample_weight
 
             idxs = np.ones(X_phase.shape[0], dtype=bool)
             if phase > 0:

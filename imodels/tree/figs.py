@@ -490,6 +490,9 @@ class FIGS(BaseEstimator):
         for i in range(X.shape[0]):
             preds[i] = _predict_tree_single_point(root, X[i])
         return preds
+    
+    def fit_weighted_combination_trees(self, X):
+        
 
     @property
     def feature_importances_(self):
@@ -567,7 +570,7 @@ class FIGSCV:
         self.cv = cv
         self.scoring = scoring
 
-    def fit(self, X, y):
+    def fit(self, X, y,sample_weight  = None):
         self.scores_ = []
         for _i, n_rules in enumerate(self.n_rules_list):
             est = self._figs_class(
@@ -581,7 +584,7 @@ class FIGSCV:
                 self.figs = est
 
             self.scores_.append(mean_score)
-        self.figs.fit(X=X, y=y)
+        self.figs.fit(X=X, y=y,sample_weight  = sample_weight)
 
     def predict_proba(self, X):
         return self.figs.predict_proba(X)
