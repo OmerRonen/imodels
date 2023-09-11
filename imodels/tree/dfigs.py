@@ -23,12 +23,13 @@ from imodels.tree.viz_utils import extract_sklearn_tree_from_figs
 def compute_sample_weight(y):
     sample_weight =  np.zeros(len(y))
     one_count = pd.Series(y).value_counts()[1.0]
-    one_proportion = one_count/y.shape[0]
+    one_proportion = y.shape[0]/one_count
+    zero_proportion = y.shape[0]/(y.shape[0] - one_count)
     for i in range(len(y)):
         if y[i] == 1:
-            sample_weight[i] = 1.0/one_proportion
+            sample_weight[i] = one_proportion
         else:
-            sample_weight[i] = 1.0
+            sample_weight[i] = zero_proportion
     return sample_weight
 
 class D_FIGS(FIGS):
