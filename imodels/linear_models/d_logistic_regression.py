@@ -48,7 +48,7 @@ class D_LogisticRegression():
     Currently we only allow for missingness pattern where each patients in a subsequent phase are only a subset of previous phases
     """
     
-    def __init__(self,alphas = [1.0],max_iter: int = 100, phases:dict=None, cv: int = 3):
+    def __init__(self,alphas = [1.0],max_iter: int = 100, phases:dict=None, cv: int = 3,penalty = 'l1'):
         """
         params
         -----------
@@ -66,6 +66,8 @@ class D_LogisticRegression():
         self.weights = 0
         self.alphas = alphas
         self.cv = cv
+        self.penalty = penalty
+        self.CV_alpha = None
         
     def fit(self,X,y,use_class_weight = True): 
         """
@@ -75,72 +77,101 @@ class D_LogisticRegression():
         y = 2*y - 1 #coordinate descent requires y to be within 1,-1
         #w = np.zeros(n_features + 1)
         adjusted_phases = {}
+        max_phase = 0
         for phase, phase_features in self.phases.items():
-            adjusted_phases[phase + 1] = [feature + 1 for feature in phase_features]
-        
+            adjusted_phases[phase + 1] = [feature + 1 for feature in phase_features]     
+            max_phase = phase
+            
         X = np.hstack((np.ones((len(X), 1)), X))
         w_phase = 0
+
+        phase_feature_to_idx = dict(zip(self.phases[max_phase],[0]*X.shape[1]))
+        
+        for phase,phase_features in adjusted_phases.items():
+            if phase == 1:
+                for j,feat in enumerate(phase_features):
+                    phase_feature_to_idx[feat] = j
+            else:
+                new_features = list(set(phase_features).difference(adjusted_phases[phase - 1]))
+                new_features = np.sort(new_features)
+                for feat in new_features:
+                    phase_feature_to_idx[feat] = max(phase_feature_to_idx.values()) + 1    
+        
         for phase, phase_features in adjusted_phases.items():
             X_phase = X[:, phase_features]
             y_phase = y                    
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0] #extract indices 
             X_phase = X_phase[non_na_indices, :]
             y_phase = y_phase[non_na_indices]
-            print(X_phase)
             sample_weight_phase = compute_sample_weight(y_phase)
-            X_phase = np.hstack((np.ones((len(X_phase), 1)), X_phase))
-            opt_alpha = self.get_cv_phase_alpha(X_phase,y_phase,w_phase,phase,phase_features,adjusted_phases,sample_weight_phase)
-            w_phase = self.fit_phase(phase,phase_features,adjusted_phases,X_phase,y_phase,opt_alpha,w_phase,sample_weight_phase)
-        
-        self.weights = w_phase
-            #w_phase_alphas = []
-            #for alpha in self.alphas:   
-                #def choose alpha here 
-            #    w_phase_alphas.append(self.fit_phase(phase,phase_features,adjusted_phases,X_phase,y_phase,alpha,w_phase))
-            # refit with chosen alpha
+            if len(self.alphas) == 1:
+                opt_alpha = self.alphas[0]
+            else:
+                opt_alpha = self.get_cv_phase_alpha(X_phase,y_phase,w_phase,phase,phase_features,adjusted_phases,sample_weight_phase,phase_feature_to_idx)
+            self.CV_alpha = opt_alpha
+            w_phase = self.fit_phase(phase,phase_features,adjusted_phases,X_phase,y_phase,opt_alpha,w_phase,sample_weight_phase,phase_feature_to_idx)
+            print(w_phase)
+
+        self.weights = np.zeros(n_features + 1)
+        for k in range(n_features + 1):
+            self.weights[k] = w_phase[phase_feature_to_idx[k]]
+
             
-            
-    def fit_phase(self,phase,phase_features,adjusted_phases,X_phase,y_phase,alpha,w_phase,sample_weight):
-        #w_phase = self.weights
+    def fit_phase(self,phase,phase_features,adjusted_phases,X_phase,y_phase,alpha,w_phase,sample_weight,phase_feat_to_idx):
         if phase == 1: # if current phase is 1st phase
-            w_phase = np.zeros(len(phase_features) + 1)
+            w_phase = np.zeros(len(phase_features))
             new_features = phase_features
-        else: # if current phase is 1st phase
-            w_new_phase = np.zeros(len(phase_features) + 1)
+        else: 
+            w_new_phase = np.zeros(len(phase_features))
             for k in range(len(w_phase)):
                 w_new_phase[k] = w_phase[k]
             w_phase = w_new_phase
             new_features = set(phase_features).difference(adjusted_phases[phase - 1])
             new_features = list(new_features)
-        w_phase = self.coordinate_descent(X_phase,y_phase,w_phase,new_features,phase,alpha,sample_weight)
+        w_phase = self.coordinate_descent(X_phase,y_phase,w_phase,new_features,phase,alpha,sample_weight,phase_feat_to_idx)
         
         return w_phase
         #self.weights = w_phase
         
             
-    def coordinate_descent(self,X_phase,y_phase,w_phase,new_features,phase,alpha,sample_weight):
+    def coordinate_descent(self,X_phase,y_phase,w_phase,new_features,phase,alpha,sample_weight,phase_feat_to_idx):
             X_phase_w_phase = X_phase.dot(w_phase)
             num_phase_samples = len(X_phase)
             new_features.append(0) # adding bias term
             for t in range(self.max_iter):
                 for j in new_features:
                     #lips_const = sum([X_phase[i,j]**2 * np.exp(X_phase_w_phase[i]) * sigmoid(-X_phase_w_phase[i])**2 for i in range(num_phase_samples)]) 
-                    lips_const = np.sum(X_phase[:,j]**2)/4
-                    old_w_phase_j = w_phase[j]
-                    grad_j = -sum([y_phase[i] * X_phase[i,j] * sigmoid(-y_phase[i]*X_phase_w_phase[i]) * sample_weight[i] for i in range(num_phase_samples)])
-                    w_phase[j] = np.sign(w_phase[j] - grad_j/lips_const) * soft_thresh(w_phase[j] - grad_j/lips_const, alpha/lips_const)
-                    if old_w_phase_j != w_phase[j]:
-                         X_phase_w_phase += w_phase[j] * X_phase[:,j] - old_w_phase_j * X_phase[:,j]
+                    if self.penalty == 'l1':
+                        lips_const = np.sum(X_phase[:,phase_feat_to_idx[j]]**2)/(4.0 * num_phase_samples)
+                        if lips_const == 0.0: #features all the same. 
+                            continue
+                        old_w_phase_j = w_phase[phase_feat_to_idx[j]]
+                        grad_j = -sum([y_phase[i] * X_phase[i,phase_feat_to_idx[j]] * sigmoid(-y_phase[i]*X_phase_w_phase[i]) * sample_weight[i] for i in range(num_phase_samples)])/num_phase_samples
+                        w_phase[phase_feat_to_idx[j]] = np.sign(w_phase[phase_feat_to_idx[j]] - grad_j/lips_const) * soft_thresh(w_phase[phase_feat_to_idx[j]] - grad_j/lips_const, alpha/lips_const)
+                        if old_w_phase_j != w_phase[phase_feat_to_idx[j]]:
+                             X_phase_w_phase += w_phase[phase_feat_to_idx[j]] * X_phase[:,phase_feat_to_idx[j]] - old_w_phase_j * X_phase[:,phase_feat_to_idx[j]]
+                    elif self.penalty == 'l2':
+                        lips_const = np.sum(X_phase[:,phase_feat_to_idx[j]]**2)/(num_phase_samples) + alpha
+                        step_size = 1./lips_const
+                        if lips_const == 0.0: #features all the same. 
+                            continue
+                        old_w_phase_j = w_phase[phase_feat_to_idx[j]]
+                        grad_j = -sum([y_phase[i] * X_phase[i,phase_feat_to_idx[j]] * sigmoid(-y_phase[i]*X_phase_w_phase[i]) * sample_weight[i] for i in range(num_phase_samples)])/num_phase_samples + alpha*old_w_phase_j
+                        w_phase[phase_feat_to_idx[j]] = old_w_phase_j - step_size*grad_j
+                        if old_w_phase_j != w_phase[phase_feat_to_idx[j]]:
+                             X_phase_w_phase += w_phase[phase_feat_to_idx[j]] * X_phase[:,phase_feat_to_idx[j]] - old_w_phase_j * X_phase[:,phase_feat_to_idx[j]]
+                    else:
+                        raise Exception("Not implemented")
             return w_phase
     
-    def get_cv_phase_alpha(self,X_phase,y_phase,w_phase,phase,phase_features,adjusted_phases,sample_weight):
+    def get_cv_phase_alpha(self,X_phase,y_phase,w_phase,phase,phase_features,adjusted_phases,sample_weight,phase_feature_to_idx):
         scores = np.zeros((self.cv,len(self.alphas)))
         kf = KFold(n_splits=self.cv, random_state=None)
         for i, (train_index , test_index) in enumerate(kf.split(X_phase)):
             X_train , X_test = X_phase[train_index,:],X_phase[test_index,:]
             y_train , y_test = y_phase[train_index] , y_phase[test_index]
             for j,alpha in enumerate(self.alphas):
-                w_alpha_phase = self.fit_phase(phase,deepcopy(phase_features),deepcopy(adjusted_phases),X_train,y_train,alpha,w_phase,sample_weight)
+                w_alpha_phase = self.fit_phase(phase,deepcopy(phase_features),deepcopy(adjusted_phases),X_train,y_train,alpha,w_phase,sample_weight,phase_feature_to_idx)
                 y_alpha_preds =  sigmoid(np.matmul(X_test,w_alpha_phase))
                 scores[i,j] = roc_auc_score(y_test,y_alpha_preds)
         av_scores = scores.mean(axis = 1)
