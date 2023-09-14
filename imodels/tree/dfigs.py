@@ -21,14 +21,29 @@ from imodels.tree.figs import FIGSRegressor, Node
 from imodels.tree.viz_utils import extract_sklearn_tree_from_figs
 
 
+def compute_sample_weight(y):
+    sample_weight = np.zeros(len(y))
+    one_count = pd.Series(y).value_counts()[1.0]
+    one_proportion = y.shape[0] / one_count
+    zero_proportion = y.shape[0] / (y.shape[0] - one_count)
+    for i in range(len(y)):
+        if y[i] == 1:
+            sample_weight[i] = one_proportion
+        else:
+            sample_weight[i] = zero_proportion
+    return sample_weight
+
+
 class D_FIGS(FIGS):
 
-    def __init__(self,max_rules: int = 12, max_trees: int = None, min_impurity_decrease: float = 0.0, random_state=None,
-                 max_features: str = None, phases:dict=None):
-        super().__init__(max_rules,max_trees, min_impurity_decrease, random_state, max_features)
+    def __init__(self, max_rules: int = 12, max_trees: int = None, min_impurity_decrease: float = 0.0,
+                 random_state=None,
+                 max_features: str = None, phases: dict = None):
+        super().__init__(max_rules, max_trees, min_impurity_decrease, random_state, max_features)
         self.phases = phases
 
-    def fit(self, X, y=None, feature_names=None, verbose=False, sample_weight=None, categorical_features=None):
+    def fit(self, X, y=None, feature_names=None, verbose=False, sample_weight=None,
+            categorical_features=None):
         """
         Params
         ------
@@ -49,8 +64,9 @@ class D_FIGS(FIGS):
 
         # X, y = check_X_y(X, y)
         y = y.astype(float)
-        if sample_weight is not None:
-            sample_weight = _check_sample_weight(sample_weight, X)
+        use_class_weight = sample_weight is not None
+        # if sample_weight is not None:
+        #     sample_weight = _check_sample_weight(sample_weight, X)
 
         self.trees_ = []  # list of the root nodes of added trees
         y_predictions_per_tree = {}  # predictions for each tree
@@ -65,16 +81,22 @@ class D_FIGS(FIGS):
             self.complexity_phase_ = 0  # tracks the number of rules in the model
 
             X_phase = X[:, features]
-            print(X_phase.shape)
+            # print(X_phase.shape)
             y_phase = y
             # get non na indices in X_phase
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
             X_phase = X_phase[non_na_indices, :]
             y_phase = y_phase[non_na_indices]
 
+            if use_class_weight:
+                sample_weight = compute_sample_weight(y_phase)
+            else:
+                sample_weight = sample_weight
+
             idxs = np.ones(X_phase.shape[0], dtype=bool)
             if phase > 0:
-                print(phase)
+                # print(phase)
+
                 # potential_splits = [node for node in potential_splits if not node.is_root]
                 # updating tree
                 def _update_root(node):
@@ -101,8 +123,10 @@ class D_FIGS(FIGS):
 
                         if node.is_root:
                             return node
+
                 self.trees_ = [_update_root(node) for node in self.trees_]
                 potential_splits = []
+
                 def _update_potential_splits(node):
                     if node is not None:
                         is_ps = getattr(node, "ps", False)
@@ -110,6 +134,7 @@ class D_FIGS(FIGS):
                             potential_splits.append(node)
                         _update_potential_splits(node.left_temp)
                         _update_potential_splits(node.right_temp)
+
                 for tree in self.trees_:
                     _update_potential_splits(tree)
 
@@ -219,6 +244,7 @@ class D_FIGS(FIGS):
             # annotate final tree with node_id and value_sklearn
             for tree_ in self.trees_:
                 node_counter = iter(range(0, int(1e06)))
+
                 def _annotate_node(node: Node, X, y):
                     if node is None:
                         return
@@ -263,7 +289,7 @@ class D_FIGS(FIGS):
             # get all non na indices for these variables sum over rows
             X_phase = X[:, phase_variables]
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
-            X_phase = X_phase[non_na_indices,:]
+            X_phase = X_phase[non_na_indices, :]
             preds[non_na_indices] = 0
             for tree in self.model_phases[phase]:
                 preds[non_na_indices] += self._predict_tree(tree, X_phase)
@@ -293,7 +319,7 @@ class D_FIGS(FIGS):
             # get all non na indices for these variables sum over rows
             X_phase = X[:, phase_variables]
             non_na_indices = np.where(np.sum(np.isnan(X_phase), axis=1) == 0)[0]
-            X_phase = X_phase[non_na_indices,:]
+            X_phase = X_phase[non_na_indices, :]
             preds[non_na_indices] = 0
             for tree in self.model_phases[phase]:
                 preds[non_na_indices] += self._predict_tree(tree, X_phase)
@@ -346,16 +372,12 @@ class D_FIGS(FIGS):
         plt.show()
 
 
-
-
 class D_FIGSRegressor(D_FIGS, RegressorMixin):
     ...
 
 
 class D_FIGSClassifier(D_FIGS, ClassifierMixin):
     ...
-
-
 
 
 if __name__ == '__main__':
@@ -366,5 +388,3 @@ if __name__ == '__main__':
     d_figs = D_FIGSRegressor(phases=phases, max_rules=3, max_trees=1)
     d_figs.fit(X, y)
     print(d_figs)
-
-
